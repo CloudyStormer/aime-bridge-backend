@@ -1,0 +1,91 @@
+from datetime import datetime
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+ChatRole = Literal["wife", "assistant"]
+MessageKind = Literal["text", "voice"]
+ConversationMode = Literal["chat", "training"]
+
+
+class ChatMessage(BaseModel):
+    id: str
+    role: ChatRole
+    kind: MessageKind
+    content: str
+    createdAt: datetime
+    mode: ConversationMode = "chat"
+    durationSeconds: float | None = None
+    audioUrl: str | None = None
+    pending: bool | None = None
+    failed: bool | None = None
+
+
+class ChatHistoryResponse(BaseModel):
+    messages: list[ChatMessage]
+
+
+class SendChatMessageRequest(BaseModel):
+    content: str = Field(default="")
+    kind: MessageKind = "text"
+    durationSeconds: float | None = Field(default=None, ge=0)
+
+
+class SendChatMessageResponse(BaseModel):
+    message: ChatMessage
+
+
+class ChatRequest(BaseModel):
+    user_id: str = Field(default="local", min_length=1)
+    message: str = Field(..., min_length=1)
+
+
+class ChatResponse(BaseModel):
+    reply: str
+
+
+class TrainingChatRequest(BaseModel):
+    user_id: str = Field(default="local", min_length=1)
+    message: str = Field(..., min_length=1)
+
+
+class ConversationReviewRequest(BaseModel):
+    startAt: datetime
+    endAt: datetime
+    modes: list[ConversationMode] = Field(default_factory=lambda: ["chat"])
+
+
+class ConversationReviewStats(BaseModel):
+    totalMessages: int
+    wifeMessages: int
+    assistantMessages: int
+    voiceMessages: int
+
+
+class ConversationReviewResponse(BaseModel):
+    startAt: datetime
+    endAt: datetime
+    modes: list[ConversationMode]
+    stats: ConversationReviewStats
+    summary: str
+    messages: list[ChatMessage]
+
+
+class ReviewSummaryResponse(BaseModel):
+    title: str
+    rangeLabel: str
+    aiSummary: str
+    wifeSummary: str
+    moments: list[str]
+    suggestions: list[str]
+    messageCount: int
+
+
+class AIStatusResponse(BaseModel):
+    provider: str
+    mode: str
+    model: str
+    base_url: str
+    api_key_configured: bool
+    init_error: str
