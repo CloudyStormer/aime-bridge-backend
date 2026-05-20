@@ -1,7 +1,8 @@
 from datetime import date, datetime, time, timedelta, timezone
 
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 
 from app.config import settings
 from app.schemas import (
@@ -16,10 +17,14 @@ from app.schemas import (
     ReviewSummaryResponse,
     SendChatMessageRequest,
     SendChatMessageResponse,
+    TTSRequest,
     TrainingChatRequest,
+    VoiceTranscriptionResponse,
 )
 from app.services.ai_service import ai_service
+from app.services.asr_service import transcribe_pcm16
 from app.services.chat_store import ChatStore
+from app.services.tts_service import synthesize_audio
 
 
 app = FastAPI(title=settings.app_name)
@@ -129,6 +134,25 @@ def conversation_review(payload: ConversationReviewRequest) -> ConversationRevie
 @app.post("/api/reviews/conversation", response_model=ConversationReviewResponse)
 def conversation_review_alias(payload: ConversationReviewRequest) -> ConversationReviewResponse:
     return conversation_review(payload)
+
+
+@app.post("/api/voice/transcribe", response_model=VoiceTranscriptionResponse)
+async def transcribe_voice(audio: UploadFile = File(...)) -> VoiceTranscriptionResponse:
+    audio_bytes = await audio.read()
+    try:
+        text = await transcribe_pcm16(audio_bytes)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return VoiceTranscriptionResponse(text=text)
+
+
+@app.post("/tts")
+async def text_to_speech(payload: TTSRequest) -> Response:
+    try:
+        audio_bytes = await synthesize_audio(payload.text.strip(), voice=payload.voice)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(content=audio_bytes, media_type="audio/mpeg")
 
 
 @app.get("/api/chat/review", response_model=ReviewSummaryResponse)

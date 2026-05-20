@@ -82,6 +82,15 @@ class ReviewSummaryResponse(BaseModel):
     messageCount: int
 
 
+class VoiceTranscriptionResponse(BaseModel):
+    text: str
+
+
+class TTSRequest(BaseModel):
+    text: str = Field(..., min_length=1)
+    voice: str = "x4_yezi"
+
+
 class AIStatusResponse(BaseModel):
     provider: str
     mode: str

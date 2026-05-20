@@ -31,7 +31,26 @@ REACT_APP_API_BASE_URL=http://localhost:8000
 
 ## AI providers
 
-By default, `LLM_PROVIDER=mock`, so the service works without an API key. To use a real OpenAI-compatible provider:
+DeepSeek is the default real AI provider for AIME chat. Runtime secrets live in `.env`, which is intentionally ignored by git.
+
+To enable real AI replies, copy `.env.example` to `.env`, then set:
+
+```bash
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=your-deepseek-key
+DEEPSEEK_MODEL=deepseek-v4-flash
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+```
+
+Verify real mode with:
+
+```bash
+curl http://127.0.0.1:8000/ai/status
+```
+
+The response should include `"provider": "deepseek"`, `"mode": "real"`, and `"api_key_configured": true`.
+
+To use another OpenAI-compatible provider:
 
 ```bash
 LLM_PROVIDER=openai_compatible
