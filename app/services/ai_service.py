@@ -165,7 +165,8 @@ class AIService:
         text = user_message.strip()
         if not text:
             return "我一直都在。你可以直接告诉我，哪些话要更像你，哪些话以后不要这么说。"
-        return f"收到，我会把这条当成训练规则：{text}。后续回复会更贴近这个语气和边界。"
+        ending = "" if text.endswith(("。", "！", "？", ".", "!", "?")) else "。"
+        return f"收到，我会把这条当成训练规则：{text}{ending}后续回复会更贴近这个语气和边界。"
 
     def _fallback_review(self, messages: list[dict[str, str]], start_at: str, end_at: str) -> str:
         wife_count = sum(1 for item in messages if item.get("role") == "wife")
