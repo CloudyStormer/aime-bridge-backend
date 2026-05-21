@@ -199,16 +199,21 @@ async def voice_clone_train(
     audio: UploadFile = File(...),
     textId: int = Form(default=5001),
     textSegId: int = Form(default=1),
+    format: str = Form(default=""),
     resourceName: str = Form(default="aime-daily-voice"),
 ) -> VoiceCloneTrainResponse:
-    suffix = Path(audio.filename or "").suffix.lower()
+    format_suffix = f".{format.strip().lower().lstrip('.')}" if format else ""
+    suffix = Path(audio.filename or "").suffix.lower() or format_suffix
     if suffix not in {".wav", ".mp3", ".m4a", ".pcm"}:
         suffix = ".wav"
 
     VOICE_CLONE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     filename = f"{uuid4().hex}{suffix}"
     file_path = VOICE_CLONE_UPLOAD_DIR / filename
-    file_path.write_bytes(await audio.read())
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="录音文件为空，请重新录制")
+    file_path.write_bytes(audio_bytes)
     audio_url = f"{settings.public_base_url.rstrip('/')}/uploads/voice-clone/{filename}"
 
     try:
@@ -220,7 +225,7 @@ async def voice_clone_train(
             task_name=resourceName,
         )
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=f"{exc}; audioUrl={audio_url}") from exc
     return VoiceCloneTrainResponse(taskId=task_id, audioUrl=audio_url)
 
 
