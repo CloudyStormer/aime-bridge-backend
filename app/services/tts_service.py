@@ -20,6 +20,47 @@ TTS_CONNECT_TIMEOUT_SECONDS = 8
 TTS_RECEIVE_TIMEOUT_SECONDS = 15
 
 
+def _infer_voice_mood(text: str) -> dict[str, int | str]:
+    lowered = text.lower()
+    sad_words = ("累", "难受", "委屈", "想哭", "害怕", "低落", "崩溃", "失落", "心疼", "抱抱", "没事")
+    warm_words = ("乖", "慢慢", "陪你", "我在", "别怕", "放心", "抱", "想你", "宝贝")
+    happy_words = ("开心", "真好", "哈哈", "太棒", "喜欢", "期待", "厉害", "好呀", "爱你")
+    urgent_words = ("别急", "马上", "赶紧", "现在", "一定", "必须")
+
+    profile: dict[str, int | str] = {
+        "speed": 46,
+        "pitch": 49,
+        "volume": 72,
+        "rhy": 1,
+        "style": settings.xfyun_clone_style or "chat",
+        "impactFactor": 35,
+    }
+    if any(word in text for word in sad_words):
+        profile.update({"speed": 40, "pitch": 45, "volume": 68, "impactFactor": 50})
+    elif any(word in text for word in warm_words):
+        profile.update({"speed": 42, "pitch": 47, "volume": 70, "impactFactor": 45})
+    elif any(word in text for word in happy_words) or "!" in text or "！" in text:
+        profile.update({"speed": 50, "pitch": 54, "volume": 76, "impactFactor": 55})
+    elif any(word in lowered for word in urgent_words):
+        profile.update({"speed": 52, "pitch": 51, "volume": 74, "impactFactor": 40})
+    return profile
+
+
+def _shape_clone_text(text: str) -> str:
+    shaped = (
+        text.replace("。", "。 ")
+        .replace("，", "， ")
+        .replace("？", "？ ")
+        .replace("！", "！ ")
+        .replace("；", "； ")
+        .replace("：", "： ")
+    )
+    shaped = " ".join(shaped.split())
+    if len(shaped) <= 80 and not shaped.endswith(("。", "！", "？", ".", "!", "?")):
+        shaped = f"{shaped}。"
+    return shaped
+
+
 def _build_auth_url(host: str = TTS_HOST, path: str = TTS_PATH) -> str:
     date = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
     sign_origin = f"host: {host}\ndate: {date}\nGET {path} HTTP/1.1"
@@ -47,7 +88,9 @@ async def synthesize_audio(text: str, voice: str = "x4_yezi") -> bytes:
     if not settings.xfyun_app_id or not settings.xfyun_api_key or not settings.xfyun_api_secret:
         raise RuntimeError("讯飞 TTS 未配置，请设置 XFYUN_APP_ID / XFYUN_API_KEY / XFYUN_API_SECRET")
 
-    text_b64 = base64.b64encode(text.encode("utf-8")).decode("utf-8")
+    profile = _infer_voice_mood(text)
+    shaped_text = _shape_clone_text(text)
+    text_b64 = base64.b64encode(shaped_text.encode("utf-8")).decode("utf-8")
     chunks: list[bytes] = []
 
     async with websockets.connect(
@@ -125,16 +168,16 @@ async def synthesize_clone_audio(text: str, res_id: str | None = None) -> bytes:
                     "parameter": {
                         "tts": {
                             "vcn": settings.xfyun_clone_vcn or "x6_clone",
-                            "volume": 65,
-                            "rhy": 0,
+                            "volume": profile["volume"],
+                            "rhy": profile["rhy"],
                             "pybuffer": 1,
-                            "speed": 48,
-                            "pitch": 50,
+                            "speed": profile["speed"],
+                            "pitch": profile["pitch"],
                             "bgs": 0,
                             "reg": 0,
                             "rdn": 0,
-                            "style": settings.xfyun_clone_style or "chat",
-                            "impactFactor": -1,
+                            "style": profile["style"],
+                            "impactFactor": profile["impactFactor"],
                             "audio": {
                                 "encoding": "lame",
                                 "sample_rate": 24000,
