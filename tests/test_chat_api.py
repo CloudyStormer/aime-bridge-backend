@@ -174,6 +174,12 @@ def test_training_memory_prompt_shapes_daily_ai_identity() -> None:
     assert "以训练者的身份去回应用户" in training_prompt
 
 
+def test_daily_reply_removes_stage_directions() -> None:
+    text = ai_service._clean_daily_reply("（轻轻抱住你，低声说）别怕，我在。")
+
+    assert text == "别怕，我在。"
+
+
 def test_conversation_review_filters_by_time_range(tmp_path: Path) -> None:
     original_path = chat_store._file_path
     original_max = chat_store._max_history_messages

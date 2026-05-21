@@ -88,7 +88,6 @@ async def synthesize_audio(text: str, voice: str = "x4_yezi") -> bytes:
     if not settings.xfyun_app_id or not settings.xfyun_api_key or not settings.xfyun_api_secret:
         raise RuntimeError("讯飞 TTS 未配置，请设置 XFYUN_APP_ID / XFYUN_API_KEY / XFYUN_API_SECRET")
 
-    profile = _infer_voice_mood(text)
     shaped_text = _shape_clone_text(text)
     text_b64 = base64.b64encode(shaped_text.encode("utf-8")).decode("utf-8")
     chunks: list[bytes] = []
@@ -137,7 +136,10 @@ async def synthesize_audio(text: str, voice: str = "x4_yezi") -> bytes:
             if response.get("data", {}).get("status") == 2:
                 break
 
-    return b"".join(chunks)
+    audio = b"".join(chunks)
+    if not audio:
+        raise RuntimeError("讯飞 TTS 未返回音频")
+    return audio
 
 
 async def synthesize_clone_audio(text: str, res_id: str | None = None) -> bytes:
@@ -148,7 +150,9 @@ async def synthesize_clone_audio(text: str, res_id: str | None = None) -> bytes:
     if not final_res_id:
         raise RuntimeError("一句话复刻音色未配置，请设置 XFYUN_CLONE_RES_ID")
 
-    text_b64 = base64.b64encode(text.encode("utf-8")).decode("utf-8")
+    profile = _infer_voice_mood(text)
+    shaped_text = _shape_clone_text(text)
+    text_b64 = base64.b64encode(shaped_text.encode("utf-8")).decode("utf-8")
     chunks: list[bytes] = []
 
     async with websockets.connect(
@@ -217,4 +221,7 @@ async def synthesize_clone_audio(text: str, res_id: str | None = None) -> bytes:
             if response.get("payload", {}).get("audio", {}).get("status") == 2 or header.get("status") == 2:
                 break
 
-    return b"".join(chunks)
+    audio = b"".join(chunks)
+    if not audio:
+        raise RuntimeError("讯飞复刻 TTS 未返回音频")
+    return audio

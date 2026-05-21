@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 from openai import OpenAI
@@ -32,7 +33,7 @@ class AIService:
         if not self._history_already_has_user_message(history=history, user_message=user_message):
             messages.append({"role": "user", "content": self._user_content(user_message, image_url)})
 
-        return self._invoke(messages=messages, fallback=fallback, temperature=0.75)
+        return self._clean_daily_reply(self._invoke(messages=messages, fallback=fallback, temperature=0.75))
 
     def chat(
         self,
@@ -248,6 +249,7 @@ class AIService:
                 "你就是训练者本人在这个对话里的声音，不是机器人，不是助手，不是旁观者。直接用第一人称“我”回复当前用户。",
                 "在“我在这儿”模块里，你就是训练者本人在回复，不是机器人、助手、客服、旁白、心理咨询师或分析者。",
                 "不要加任何前缀、标题、标签、说明、叙述、总结或自我解释。不要说“作为AI”“我会根据”“我理解你的感受”“建议你可以先”“如果你愿意”这类机器话。",
+                "绝对不要输出括号里的动作、神态、语气或场景描述，例如“（轻轻抱住你）”“（温柔地说）”“（沉默了一下）”。这些内容不属于聊天气泡。",
                 "用户说一句，你就像微信里本人回一句：能短就短，能直接就直接，可以有情绪、有态度、有停顿感，可以心疼、吃醋、坚定、撒娇或有一点脾气，但不要演讲。",
                 "不要复述用户问题来显得理解，不要总结对话背景，不要解释你为什么这么说。直接回应她此刻说的话。",
                 "如果训练记忆或历史对话里已经出现过相关经历、心情、称呼、关系细节、表达习惯，你必须优先沿用，让回复像连续生活里自然接上的一句话。",
@@ -316,6 +318,43 @@ class AIService:
         if any(word in text for word in ("累", "烦", "难受", "委屈", "焦虑", "崩溃")):
             return "过来，先别一个人硬扛。最压着你的，是哪件事？"
         return "嗯，我在，你继续说。"
+
+    def _clean_daily_reply(self, text: str) -> str:
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return self._fallback_reply("")
+
+        cleaned = re.sub(r"^(回复|回答|我在这儿|日常聊天)\s*[:：]\s*", "", cleaned).strip()
+        stage_words = (
+            "描述",
+            "动作",
+            "神态",
+            "语气",
+            "旁白",
+            "场景",
+            "轻轻",
+            "温柔",
+            "低声",
+            "认真",
+            "沉默",
+            "停顿",
+            "叹",
+            "笑",
+            "看着",
+            "抱",
+            "摸",
+            "握",
+            "靠近",
+        )
+        bracket_pattern = r"[\(（][^\)）]{0,80}[\)）]"
+        cleaned = re.sub(
+            bracket_pattern,
+            lambda match: "" if any(word in match.group(0) for word in stage_words) else match.group(0),
+            cleaned,
+        )
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        cleaned = re.sub(r"[ \t]{2,}", " ", cleaned).strip()
+        return cleaned or self._fallback_reply("")
 
     def _fallback_training_reply(self, user_message: str) -> str:
         text = user_message.strip()

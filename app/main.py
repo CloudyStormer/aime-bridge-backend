@@ -173,7 +173,10 @@ async def transcribe_voice(audio: UploadFile = File(...)) -> VoiceTranscriptionR
 async def text_to_speech(payload: TTSRequest) -> Response:
     try:
         if payload.scene == "daily" and (settings.xfyun_clone_res_id or load_active_clone_res_id()):
-            audio_bytes = await synthesize_clone_audio(payload.text.strip())
+            try:
+                audio_bytes = await synthesize_clone_audio(payload.text.strip())
+            except Exception:
+                audio_bytes = await synthesize_audio(payload.text.strip(), voice=payload.voice)
         else:
             audio_bytes = await synthesize_audio(payload.text.strip(), voice=payload.voice)
     except Exception as exc:
