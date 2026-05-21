@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     chat_store_path: str = Field(default="app/data/chat_messages.json", validation_alias=AliasChoices("CHAT_STORE_PATH"))
     upload_dir: str = Field(default="app/data/uploads", validation_alias=AliasChoices("UPLOAD_DIR"))
     public_base_url: str = Field(
-        default="https://www.hgshouse.com/aimebridge",
+        default="https://api.hgshouse.com/aimebridge",
         validation_alias=AliasChoices("PUBLIC_BASE_URL", "AIME_PUBLIC_BASE_URL"),
     )
     chat_max_history_messages: int = Field(
