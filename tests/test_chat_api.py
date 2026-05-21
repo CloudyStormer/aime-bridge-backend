@@ -6,6 +6,8 @@ from app import main as main_module
 from app.main import app, chat_store
 from app.services.ai_service import ai_service
 from app.services.chat_store import ChatStore
+from app.services.tts_service import _infer_voice_mood
+from app.services.voice_clone_profile import load_active_clone_res_id, save_voice_clone_result
 
 
 def test_health() -> None:
@@ -178,6 +180,71 @@ def test_daily_reply_removes_stage_directions() -> None:
     text = ai_service._clean_daily_reply("（轻轻抱住你，低声说）别怕，我在。")
 
     assert text == "别怕，我在。"
+
+
+def test_daily_tts_requires_clone_voice(monkeypatch) -> None:
+    client = TestClient(app)
+    monkeypatch.setattr(main_module.settings, "xfyun_clone_res_id", "")
+    monkeypatch.setattr(main_module, "load_active_clone_res_id", lambda: "")
+
+    response = client.post("/tts", json={"text": "我在", "scene": "daily"})
+
+    assert response.status_code == 502
+    assert "训练声音" in response.json()["detail"]
+
+
+def test_daily_tts_does_not_fallback_to_generic_voice(monkeypatch) -> None:
+    client = TestClient(app)
+    generic_called = False
+
+    async def fake_clone(text: str) -> bytes:
+        raise RuntimeError("复刻音色额度不足")
+
+    async def fake_generic(text: str, voice: str = "x4_yezi") -> bytes:
+        nonlocal generic_called
+        generic_called = True
+        return b"generic"
+
+    monkeypatch.setattr(main_module.settings, "xfyun_clone_res_id", "trained-res-id")
+    monkeypatch.setattr(main_module, "synthesize_clone_audio", fake_clone)
+    monkeypatch.setattr(main_module, "synthesize_audio", fake_generic)
+
+    response = client.post("/tts", json={"text": "我在", "scene": "daily"})
+
+    assert response.status_code == 502
+    assert "复刻音色额度不足" in response.json()["detail"]
+    assert generic_called is False
+
+
+def test_voice_clone_profile_uses_asset_id_not_train_vid(tmp_path: Path, monkeypatch) -> None:
+    profile_path = tmp_path / "voice_clone_profile.json"
+    monkeypatch.setattr(main_module.settings, "voice_clone_profile_path", str(profile_path))
+
+    save_voice_clone_result(
+        "task-1",
+        {
+            "assetId": "asset-for-synthesis",
+            "trainVid": "voice-library-id",
+            "trainStatus": 1,
+        },
+    )
+
+    assert load_active_clone_res_id() == "asset-for-synthesis"
+
+
+def test_voice_clone_profile_does_not_use_train_vid_as_res_id(tmp_path: Path, monkeypatch) -> None:
+    profile_path = tmp_path / "voice_clone_profile.json"
+    monkeypatch.setattr(main_module.settings, "voice_clone_profile_path", str(profile_path))
+
+    save_voice_clone_result("task-1", {"trainVid": "voice-library-id", "trainStatus": 1})
+
+    assert load_active_clone_res_id() == ""
+
+
+def test_voice_clone_impact_factor_matches_xfyun_range() -> None:
+    profile = _infer_voice_mood("别怕，我在。")
+
+    assert profile["impactFactor"] == -1
 
 
 def test_conversation_review_filters_by_time_range(tmp_path: Path) -> None:

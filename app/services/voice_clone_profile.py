@@ -15,13 +15,14 @@ def load_active_clone_res_id() -> str:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return ""
-    return str(data.get("assetId") or data.get("trainVid") or "").strip()
+    return str(data.get("assetId") or data.get("trainVcn") or "").strip()
 
 
 def save_voice_clone_result(task_id: str, result: dict[str, Any]) -> None:
     asset_id = str(result.get("assetId") or "").strip()
+    train_vcn = str(result.get("trainVcn") or "").strip()
     train_vid = str(result.get("trainVid") or "").strip()
-    if not asset_id and not train_vid:
+    if not asset_id and not train_vcn:
         return
 
     path = _profile_path()
@@ -29,6 +30,7 @@ def save_voice_clone_result(task_id: str, result: dict[str, Any]) -> None:
     payload = {
         "taskId": task_id,
         "assetId": asset_id,
+        "trainVcn": train_vcn,
         "trainVid": train_vid,
         "trainStatus": result.get("trainStatus"),
         "failedDesc": result.get("failedDesc") or "",

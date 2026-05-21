@@ -33,16 +33,16 @@ def _infer_voice_mood(text: str) -> dict[str, int | str]:
         "volume": 72,
         "rhy": 1,
         "style": settings.xfyun_clone_style or "chat",
-        "impactFactor": 35,
+        "impactFactor": -1,
     }
     if any(word in text for word in sad_words):
-        profile.update({"speed": 40, "pitch": 45, "volume": 68, "impactFactor": 50})
+        profile.update({"speed": 40, "pitch": 45, "volume": 68})
     elif any(word in text for word in warm_words):
-        profile.update({"speed": 42, "pitch": 47, "volume": 70, "impactFactor": 45})
+        profile.update({"speed": 42, "pitch": 47, "volume": 70})
     elif any(word in text for word in happy_words) or "!" in text or "！" in text:
-        profile.update({"speed": 50, "pitch": 54, "volume": 76, "impactFactor": 55})
+        profile.update({"speed": 50, "pitch": 54, "volume": 76})
     elif any(word in lowered for word in urgent_words):
-        profile.update({"speed": 52, "pitch": 51, "volume": 74, "impactFactor": 40})
+        profile.update({"speed": 52, "pitch": 51, "volume": 74})
     return profile
 
 
@@ -172,6 +172,7 @@ async def synthesize_clone_audio(text: str, res_id: str | None = None) -> bytes:
                     "parameter": {
                         "tts": {
                             "vcn": settings.xfyun_clone_vcn or "x6_clone",
+                            "languageID": 0,
                             "volume": profile["volume"],
                             "rhy": profile["rhy"],
                             "pybuffer": 1,

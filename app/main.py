@@ -66,7 +66,15 @@ def health() -> dict[str, str]:
 
 @app.get("/ai/status", response_model=AIStatusResponse)
 def ai_status() -> dict:
-    return ai_service.runtime_status()
+    status = ai_service.runtime_status()
+    clone_res_id = settings.xfyun_clone_res_id or load_active_clone_res_id()
+    status.update(
+        {
+            "daily_voice_clone_configured": bool(clone_res_id),
+            "daily_voice_clone_res_id": _mask_id(clone_res_id),
+        }
+    )
+    return status
 
 
 @app.post("/ai/chat", response_model=ChatResponse)
@@ -172,11 +180,10 @@ async def transcribe_voice(audio: UploadFile = File(...)) -> VoiceTranscriptionR
 @app.post("/tts")
 async def text_to_speech(payload: TTSRequest) -> Response:
     try:
-        if payload.scene == "daily" and (settings.xfyun_clone_res_id or load_active_clone_res_id()):
-            try:
-                audio_bytes = await synthesize_clone_audio(payload.text.strip())
-            except Exception:
-                audio_bytes = await synthesize_audio(payload.text.strip(), voice=payload.voice)
+        if payload.scene == "daily":
+            if not (settings.xfyun_clone_res_id or load_active_clone_res_id()):
+                raise RuntimeError("我在这儿的训练声音还没有配置成功，请先完成声音训练并查询训练结果")
+            audio_bytes = await synthesize_clone_audio(payload.text.strip())
         else:
             audio_bytes = await synthesize_audio(payload.text.strip(), voice=payload.voice)
     except Exception as exc:
@@ -243,6 +250,7 @@ async def voice_clone_result(taskId: str = Query(...)) -> VoiceCloneResultRespon
         taskId=taskId,
         trainStatus=data.get("trainStatus"),
         assetId=data.get("assetId") or "",
+        trainVcn=data.get("trainVcn") or "",
         trainVid=data.get("trainVid") or "",
         failedDesc=data.get("failedDesc") or "",
         raw=data,
@@ -619,3 +627,11 @@ def _build_review_follow_up_suggestions(messages: list, voice_count: int, image_
     if image_count:
         suggestions.append("这段里有图片，必要时可以围绕图片上下文继续追问。")
     return suggestions
+
+
+def _mask_id(value: str) -> str:
+    if not value:
+        return ""
+    if len(value) <= 10:
+        return "***"
+    return f"{value[:4]}...{value[-4:]}"

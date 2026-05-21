@@ -129,6 +129,7 @@ class VoiceCloneResultResponse(BaseModel):
     taskId: str
     trainStatus: int | None = None
     assetId: str = ""
+    trainVcn: str = ""
     trainVid: str = ""
     failedDesc: str = ""
     raw: dict = Field(default_factory=dict)
@@ -141,3 +142,5 @@ class AIStatusResponse(BaseModel):
     base_url: str
     api_key_configured: bool
     init_error: str
+    daily_voice_clone_configured: bool = False
+    daily_voice_clone_res_id: str = ""
