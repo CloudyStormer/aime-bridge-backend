@@ -1,8 +1,11 @@
 from datetime import date, datetime, time, timedelta, timezone
+from pathlib import Path
+from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.schemas import (
@@ -15,6 +18,8 @@ from app.schemas import (
     ChatHistoryResponse,
     ConversationMode,
     ReviewSummaryResponse,
+    ReviewFollowUpRequest,
+    ReviewFollowUpResponse,
     SendChatMessageRequest,
     SendChatMessageResponse,
     TTSRequest,
@@ -32,6 +37,9 @@ chat_store = ChatStore(
     file_path=settings.chat_store_path,
     max_history_messages=settings.chat_max_history_messages,
 )
+UPLOAD_ROOT = Path(settings.upload_dir)
+IMAGE_UPLOAD_DIR = UPLOAD_ROOT / "images"
+UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 LOCAL_TIMEZONE = timezone(timedelta(hours=8))
 
 app.add_middleware(
@@ -41,6 +49,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.mount("/uploads", StaticFiles(directory=str(UPLOAD_ROOT)), name="uploads")
 
 
 @app.get("/health")
@@ -57,7 +67,8 @@ def ai_status() -> dict:
 def ai_chat(payload: ChatRequest) -> ChatResponse:
     reply = ai_service.chat(
         user_message=payload.message.strip(),
-        history=chat_store.recent_for_ai(mode="chat"),
+        history=chat_store.recent_for_ai(mode="chat", limit=settings.ai_context_messages),
+        training_memory=chat_store.recent_for_ai(mode="training", limit=settings.ai_context_messages),
     )
     return ChatResponse(reply=reply)
 
@@ -66,14 +77,17 @@ def ai_chat(payload: ChatRequest) -> ChatResponse:
 def ai_training_chat(payload: TrainingChatRequest) -> ChatResponse:
     reply = ai_service.training_reply(
         user_message=payload.message.strip(),
-        history=chat_store.recent_for_ai(mode="training"),
+        history=chat_store.recent_for_ai(mode="training", limit=settings.ai_context_messages),
     )
     return ChatResponse(reply=reply)
 
 
 @app.get("/api/chat/history", response_model=ChatHistoryResponse)
-def chat_history() -> ChatHistoryResponse:
-    return ChatHistoryResponse(messages=chat_store.history(mode="chat"))
+def chat_history(
+    limit: int = Query(default=50, ge=1, le=200),
+    before: datetime | None = Query(default=None),
+) -> ChatHistoryResponse:
+    return ChatHistoryResponse(messages=chat_store.history_page(mode="chat", limit=limit, before=before))
 
 
 @app.post("/api/chat/message", response_model=SendChatMessageResponse)
@@ -83,8 +97,11 @@ async def send_chat_message(request: Request) -> SendChatMessageResponse:
 
 
 @app.get("/api/training/history", response_model=ChatHistoryResponse)
-def training_history() -> ChatHistoryResponse:
-    return ChatHistoryResponse(messages=chat_store.history(mode="training"))
+def training_history(
+    limit: int = Query(default=50, ge=1, le=200),
+    before: datetime | None = Query(default=None),
+) -> ChatHistoryResponse:
+    return ChatHistoryResponse(messages=chat_store.history_page(mode="training", limit=limit, before=before))
 
 
 @app.post("/api/training/message", response_model=SendChatMessageResponse)
@@ -169,6 +186,36 @@ def chat_review_summary(
     return _build_review_summary(messages=messages, start_date=startDate, end_date=endDate)
 
 
+@app.post("/api/chat/review/ask", response_model=ReviewFollowUpResponse)
+def chat_review_follow_up(payload: ReviewFollowUpRequest) -> ReviewFollowUpResponse:
+    try:
+        start_date = date.fromisoformat(payload.startDate)
+        end_date = date.fromisoformat(payload.endDate)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid date range") from exc
+
+    start_at, end_at = _local_date_range_to_utc(startDate=start_date, endDate=end_date)
+    messages = chat_store.review_messages(
+        start_at=start_at,
+        end_at=end_at,
+        modes=["chat"],
+    )
+    range_label = f"{min(start_date, end_date).isoformat()} 至 {max(start_date, end_date).isoformat()}"
+    related = _build_important_dialogues(messages=messages, limit=5)
+    answer = ai_service.review_follow_up(
+        messages=_review_items(messages),
+        start_at=start_at.isoformat(),
+        end_at=end_at.isoformat(),
+        instruction=payload.instruction.strip(),
+    )
+    return ReviewFollowUpResponse(
+        answer=answer,
+        rangeLabel=range_label,
+        relatedDialogues=related,
+        messageCount=len(messages),
+    )
+
+
 async def _send_message_for_mode(request: Request, mode: ConversationMode):
     payload = await _parse_send_message_request(request)
     content = payload.content.strip()
@@ -178,16 +225,20 @@ async def _send_message_for_mode(request: Request, mode: ConversationMode):
         kind=payload.kind,
         mode=mode,
         duration_seconds=payload.durationSeconds,
+        image_url=payload.imageUrl,
     )
     if mode == "training":
         reply = ai_service.training_reply(
             user_message=content,
-            history=chat_store.recent_for_ai(mode="training"),
+            history=chat_store.recent_for_ai(mode="training", limit=settings.ai_context_messages),
+            image_url=payload.imageUrl,
         )
     else:
         reply = ai_service.reply(
             user_message=content,
-            history=chat_store.recent_for_ai(mode="chat"),
+            history=chat_store.recent_for_ai(mode="chat", limit=settings.ai_context_messages),
+            training_memory=chat_store.recent_for_ai(mode="training", limit=settings.ai_context_messages),
+            image_url=payload.imageUrl,
         )
     return chat_store.append_assistant_message(reply, mode=mode)
 
@@ -201,16 +252,62 @@ async def _parse_send_message_request(request: Request) -> SendChatMessageReques
         duration_value = form.get("durationSeconds")
         duration_seconds = float(duration_value) if duration_value not in (None, "") else None
         audio = form.get("audio")
+        image = form.get("image")
+        image_url = None
+        if hasattr(image, "filename") and hasattr(image, "read"):
+            image_url = await _save_image_upload(request=request, image=image)
+            kind = "image"
+            if not text:
+                text = "我发了一张图片。"
         if kind == "voice" and not text:
             filename = getattr(audio, "filename", "") or "voice message"
             text = f"[收到一条语音消息：{filename}]"
         return SendChatMessageRequest(
             content=text,
-            kind="voice" if kind == "voice" else "text",
+            kind=kind if kind in {"text", "voice", "image"} else "text",
             durationSeconds=duration_seconds,
+            imageUrl=image_url,
         )
 
     return SendChatMessageRequest.model_validate(await request.json())
+
+
+async def _save_image_upload(request: Request, image: UploadFile) -> str:
+    if not image.content_type or not image.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image uploads are supported")
+
+    suffix = Path(image.filename or "").suffix.lower()
+    if suffix not in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".heif"}:
+        suffix = {
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+            "image/gif": ".gif",
+            "image/heic": ".heic",
+            "image/heif": ".heif",
+        }.get(image.content_type, ".jpg")
+
+    image_bytes = await image.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="Empty image upload")
+    if len(image_bytes) > 12 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Image is too large")
+
+    IMAGE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    filename = f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{uuid4().hex}{suffix}"
+    file_path = IMAGE_UPLOAD_DIR / filename
+    file_path.write_bytes(image_bytes)
+    return _public_upload_url(request=request, path=f"/uploads/images/{filename}")
+
+
+def _public_upload_url(request: Request, path: str) -> str:
+    base = settings.public_base_url.rstrip("/")
+    if not base:
+        forwarded_proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+        forwarded_host = request.headers.get("x-forwarded-host", request.headers.get("host", ""))
+        forwarded_prefix = request.headers.get("x-forwarded-prefix", "")
+        base = f"{forwarded_proto}://{forwarded_host}{forwarded_prefix}".rstrip("/")
+    return f"{base}{path}"
 
 
 def _local_date_range_to_utc(startDate: date, endDate: date) -> tuple[datetime, datetime]:
@@ -221,6 +318,19 @@ def _local_date_range_to_utc(startDate: date, endDate: date) -> tuple[datetime, 
     return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
 
 
+def _review_items(messages: list) -> list[dict[str, str]]:
+    return [
+        {
+            "role": item.role,
+            "speaker": "她" if item.role == "wife" else "我",
+            "kind": item.kind,
+            "content": item.content,
+            "createdAt": item.createdAt.isoformat(),
+        }
+        for item in messages
+    ]
+
+
 def _build_review_summary(
     messages: list,
     start_date: date,
@@ -229,11 +339,27 @@ def _build_review_summary(
     wife_messages = [item for item in messages if item.role == "wife"]
     assistant_messages = [item for item in messages if item.role == "assistant"]
     voice_count = sum(1 for item in messages if item.kind == "voice")
+    image_count = sum(1 for item in messages if item.kind == "image")
     range_label = f"{min(start_date, end_date).isoformat()} 至 {max(start_date, end_date).isoformat()}"
+    core_events = _build_core_events(messages=messages)
+    emotions = _build_user_emotions(messages=wife_messages)
+    important_dialogues = _build_important_dialogues(messages=messages)
+    overview = _build_review_overview(messages=messages, core_events=core_events, emotions=emotions)
 
     return ReviewSummaryResponse(
         title="这段时间的对话回顾",
         rangeLabel=range_label,
+        overview=overview,
+        coreEvents=core_events,
+        userEmotionExpressions=emotions,
+        emotionalTrend=_build_emotional_trend(wife_messages),
+        aiResponsePattern=_build_ai_response_pattern(assistant_messages),
+        importantDialogues=important_dialogues,
+        followUpSuggestions=_build_review_follow_up_suggestions(
+            messages=messages,
+            voice_count=voice_count,
+            image_count=image_count,
+        ),
         aiSummary=_summarize_side(
             messages=assistant_messages,
             empty_text="这段时间里 AI 还没有留下回复。",
@@ -296,4 +422,123 @@ def _build_review_suggestions(messages: list, voice_count: int) -> list[str]:
     ]
     if voice_count:
         suggestions.append("语音消息后续可以接 ASR 转写，让回顾更准确。")
+    return suggestions
+
+
+def _build_review_overview(messages: list, core_events: list[str], emotions: list[str]) -> str:
+    if not messages:
+        return "这个时间段里还没有可回顾的对话。"
+
+    event_text = core_events[0] if core_events else "没有明显单一事件"
+    emotion_text = emotions[0] if emotions else "情绪表达不明显"
+    return f"这段时间共有 {len(messages)} 条对话，主要围绕“{event_text}”展开；用户情绪上更接近“{emotion_text}”。"
+
+
+def _build_core_events(messages: list, limit: int = 3) -> list[str]:
+    user_texts = [item.content.strip() for item in messages if item.role == "wife" and item.content.strip()]
+    if not user_texts:
+        return ["暂无明显核心事件。"] if messages else ["这个时间段暂时没有对话。"]
+
+    events = []
+    for text in user_texts:
+        cleaned = text.replace("\n", " ").strip()
+        if not cleaned:
+            continue
+        if len(cleaned) > 42:
+            cleaned = f"{cleaned[:42]}..."
+        if cleaned not in events:
+            events.append(cleaned)
+        if len(events) >= limit:
+            break
+    return events or ["暂无明显核心事件。"]
+
+
+def _build_user_emotions(messages: list, limit: int = 3) -> list[str]:
+    emotion_keywords = [
+        "开心", "高兴", "喜欢", "想你", "爱", "委屈", "难受", "累", "烦", "焦虑",
+        "生气", "失落", "害怕", "担心", "崩溃", "孤独", "不安", "压力", "期待",
+    ]
+    matches = []
+    for item in messages:
+        text = item.content.strip()
+        if not text:
+            continue
+        found = [word for word in emotion_keywords if word in text]
+        if found:
+            quote = text if len(text) <= 38 else f"{text[:38]}..."
+            matches.append(f"{'、'.join(found[:3])}：{quote}")
+        if len(matches) >= limit:
+            break
+    if matches:
+        return matches
+    return ["没有明显强烈情绪词，整体更像日常表达。"] if messages else ["暂无用户情绪表达。"]
+
+
+def _build_emotional_trend(messages: list) -> str:
+    if not messages:
+        return "暂无可判断的情绪走势。"
+    negative = ("委屈", "难受", "累", "烦", "焦虑", "生气", "失落", "害怕", "担心", "崩溃", "压力")
+    positive = ("开心", "高兴", "喜欢", "想你", "爱", "期待", "舒服")
+    first = " ".join(item.content for item in messages[: max(1, len(messages) // 2)])
+    second = " ".join(item.content for item in messages[max(1, len(messages) // 2):])
+    first_score = sum(first.count(word) for word in positive) - sum(first.count(word) for word in negative)
+    second_score = sum(second.count(word) for word in positive) - sum(second.count(word) for word in negative)
+    if second_score > first_score:
+        return "情绪后段比前段更放松或更积极。"
+    if second_score < first_score:
+        return "情绪后段比前段更沉一些，需要继续留意。"
+    return "情绪整体比较平稳，没有明显大幅转折。"
+
+
+def _build_ai_response_pattern(messages: list) -> str:
+    if not messages:
+        return "这段时间里还没有我的回复。"
+    samples = [item.content.strip() for item in messages if item.content.strip()][:2]
+    if not samples:
+        return f"我回复了 {len(messages)} 条，主要是非文字或空内容。"
+    return f"我回复了 {len(messages)} 条，主要在承接情绪、顺着上下文回应；代表回复：“{'；'.join(samples)}”。"
+
+
+def _build_important_dialogues(messages: list, limit: int = 4) -> list[str]:
+    if not messages:
+        return []
+
+    important_words = ("委屈", "难受", "累", "烦", "焦虑", "生气", "想你", "爱", "重要", "记住", "别", "希望")
+    selected = []
+    for item in messages:
+        text = item.content.strip()
+        if not text:
+            continue
+        if any(word in text for word in important_words) or item.kind != "text":
+            speaker = "她" if item.role == "wife" else "我"
+            content = text if len(text) <= 60 else f"{text[:60]}..."
+            selected.append(f"{speaker}：{content}")
+        if len(selected) >= limit:
+            break
+
+    if selected:
+        return selected
+
+    for item in messages[:limit]:
+        text = item.content.strip()
+        if text:
+            speaker = "她" if item.role == "wife" else "我"
+            content = text if len(text) <= 60 else f"{text[:60]}..."
+            selected.append(f"{speaker}：{content}")
+    return selected
+
+
+def _build_review_follow_up_suggestions(messages: list, voice_count: int, image_count: int) -> list[str]:
+    if not messages:
+        return ["可以换一个更长的时间段再回顾。"]
+
+    suggestions = [
+        "可以继续追问：这段时间她最在意什么？",
+        "可以继续追问：帮我只看情绪变化。",
+        "可以继续追问：把重要原话列出来。",
+    ]
+    if voice_count:
+        suggestions.append("这段里有语音，必要时可以重点看语音转写内容。")
+    if image_count:
+        suggestions.append("这段里有图片，必要时可以围绕图片上下文继续追问。")
     return suggestions

@@ -28,11 +28,22 @@ class Settings(BaseSettings):
     xfyun_api_secret: str = Field(default="", validation_alias=AliasChoices("XFYUN_API_SECRET"))
 
     chat_store_path: str = Field(default="app/data/chat_messages.json", validation_alias=AliasChoices("CHAT_STORE_PATH"))
+    upload_dir: str = Field(default="app/data/uploads", validation_alias=AliasChoices("UPLOAD_DIR"))
+    public_base_url: str = Field(
+        default="https://www.hgshouse.com/aimebridge",
+        validation_alias=AliasChoices("PUBLIC_BASE_URL", "AIME_PUBLIC_BASE_URL"),
+    )
     chat_max_history_messages: int = Field(
-        default=80,
-        ge=10,
-        le=500,
+        default=0,
+        ge=0,
+        le=1000000,
         validation_alias=AliasChoices("CHAT_MAX_HISTORY_MESSAGES"),
+    )
+    ai_context_messages: int = Field(
+        default=80,
+        ge=12,
+        le=200,
+        validation_alias=AliasChoices("AI_CONTEXT_MESSAGES"),
     )
 
     model_config = SettingsConfigDict(env_file=(".env", ".env.runtime"), env_file_encoding="utf-8")

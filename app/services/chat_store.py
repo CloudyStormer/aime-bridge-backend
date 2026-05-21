@@ -29,12 +29,25 @@ class ChatStore:
             and (end_at is None or item.createdAt <= self._aware(end_at))
         ]
 
+    def history_page(
+        self,
+        mode: ConversationMode,
+        limit: int = 50,
+        before: datetime | None = None,
+    ) -> list[ChatMessage]:
+        messages = self.history(mode=mode)
+        if before is not None:
+            before_at = self._aware(before)
+            messages = [item for item in messages if item.createdAt < before_at]
+        return messages[-limit:]
+
     def append_user_message(
         self,
         content: str,
         kind: MessageKind,
         mode: ConversationMode = "chat",
         duration_seconds: float | None = None,
+        image_url: str | None = None,
     ) -> ChatMessage:
         message = ChatMessage(
             id=self._new_id(),
@@ -44,6 +57,7 @@ class ChatStore:
             createdAt=self._now(),
             mode=mode,
             durationSeconds=duration_seconds,
+            imageUrl=image_url,
         )
         self.append(message)
         return message
@@ -64,15 +78,21 @@ class ChatStore:
         with self._lock:
             messages = self._read()
             messages.append(message.model_dump(mode="json", exclude_none=True))
-            self._write(messages[-self._max_history_messages :])
+            if self._max_history_messages > 0:
+                messages = messages[-self._max_history_messages :]
+            self._write(messages)
 
-    def recent_for_ai(self, mode: ConversationMode = "chat", limit: int = 12) -> list[dict[str, str]]:
+    def recent_for_ai(self, mode: ConversationMode = "chat", limit: int = 80) -> list[dict]:
         messages = self.history(mode=mode)[-limit:]
         role_map = {"wife": "user", "assistant": "assistant"}
         return [
-            {"role": role_map[item.role], "content": item.content}
+            {
+                "role": role_map[item.role],
+                "content": item.content,
+                **({"imageUrl": item.imageUrl} if item.imageUrl else {}),
+            }
             for item in messages
-            if item.content.strip()
+            if item.content.strip() or item.imageUrl
         ]
 
     def review_messages(

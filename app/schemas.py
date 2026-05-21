@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 
 ChatRole = Literal["wife", "assistant"]
-MessageKind = Literal["text", "voice"]
+MessageKind = Literal["text", "voice", "image"]
 ConversationMode = Literal["chat", "training"]
 
 
@@ -18,6 +18,7 @@ class ChatMessage(BaseModel):
     mode: ConversationMode = "chat"
     durationSeconds: float | None = None
     audioUrl: str | None = None
+    imageUrl: str | None = None
     pending: bool | None = None
     failed: bool | None = None
 
@@ -30,6 +31,7 @@ class SendChatMessageRequest(BaseModel):
     content: str = Field(default="")
     kind: MessageKind = "text"
     durationSeconds: float | None = Field(default=None, ge=0)
+    imageUrl: str | None = None
 
 
 class SendChatMessageResponse(BaseModel):
@@ -75,10 +77,30 @@ class ConversationReviewResponse(BaseModel):
 class ReviewSummaryResponse(BaseModel):
     title: str
     rangeLabel: str
+    overview: str = ""
+    coreEvents: list[str] = Field(default_factory=list)
+    userEmotionExpressions: list[str] = Field(default_factory=list)
+    emotionalTrend: str = ""
+    aiResponsePattern: str = ""
+    importantDialogues: list[str] = Field(default_factory=list)
+    followUpSuggestions: list[str] = Field(default_factory=list)
     aiSummary: str
     wifeSummary: str
     moments: list[str]
     suggestions: list[str]
+    messageCount: int
+
+
+class ReviewFollowUpRequest(BaseModel):
+    startDate: str
+    endDate: str
+    instruction: str = Field(..., min_length=1)
+
+
+class ReviewFollowUpResponse(BaseModel):
+    answer: str
+    rangeLabel: str
+    relatedDialogues: list[str] = Field(default_factory=list)
     messageCount: int
 
 
