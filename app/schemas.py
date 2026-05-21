@@ -111,6 +111,27 @@ class VoiceTranscriptionResponse(BaseModel):
 class TTSRequest(BaseModel):
     text: str = Field(..., min_length=1)
     voice: str = "x4_yezi"
+    scene: str = "default"
+
+
+class VoiceCloneTrainTextResponse(BaseModel):
+    textId: int
+    textName: str = ""
+    textSegs: list[dict] = Field(default_factory=list)
+
+
+class VoiceCloneTrainResponse(BaseModel):
+    taskId: str
+    audioUrl: str
+
+
+class VoiceCloneResultResponse(BaseModel):
+    taskId: str
+    trainStatus: int | None = None
+    assetId: str = ""
+    trainVid: str = ""
+    failedDesc: str = ""
+    raw: dict = Field(default_factory=dict)
 
 
 class AIStatusResponse(BaseModel):

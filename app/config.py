@@ -27,9 +27,19 @@ class Settings(BaseSettings):
     xfyun_app_id: str = Field(default="", validation_alias=AliasChoices("XFYUN_APP_ID"))
     xfyun_api_key: str = Field(default="", validation_alias=AliasChoices("XFYUN_API_KEY"))
     xfyun_api_secret: str = Field(default="", validation_alias=AliasChoices("XFYUN_API_SECRET"))
+    xfyun_clone_res_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("XFYUN_CLONE_RES_ID", "AIME_DAILY_VOICE_RES_ID"),
+    )
+    xfyun_clone_vcn: str = Field(default="x6_clone", validation_alias=AliasChoices("XFYUN_CLONE_VCN"))
+    xfyun_clone_style: str = Field(default="chat", validation_alias=AliasChoices("XFYUN_CLONE_STYLE"))
 
     chat_store_path: str = Field(default="app/data/chat_messages.json", validation_alias=AliasChoices("CHAT_STORE_PATH"))
     upload_dir: str = Field(default="app/data/uploads", validation_alias=AliasChoices("UPLOAD_DIR"))
+    voice_clone_profile_path: str = Field(
+        default="app/data/voice_clone_profile.json",
+        validation_alias=AliasChoices("VOICE_CLONE_PROFILE_PATH"),
+    )
     public_base_url: str = Field(
         default="https://api.hgshouse.com/aimebridge",
         validation_alias=AliasChoices("PUBLIC_BASE_URL", "AIME_PUBLIC_BASE_URL"),

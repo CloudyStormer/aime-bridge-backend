@@ -2,7 +2,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
@@ -24,12 +24,17 @@ from app.schemas import (
     SendChatMessageResponse,
     TTSRequest,
     TrainingChatRequest,
+    VoiceCloneResultResponse,
+    VoiceCloneTrainResponse,
+    VoiceCloneTrainTextResponse,
     VoiceTranscriptionResponse,
 )
 from app.services.ai_service import ai_service
 from app.services.asr_service import transcribe_pcm16
 from app.services.chat_store import ChatStore
-from app.services.tts_service import synthesize_audio
+from app.services.tts_service import synthesize_audio, synthesize_clone_audio
+from app.services.voice_clone_service import create_voice_clone_task, get_train_text, get_voice_clone_result
+from app.services.voice_clone_profile import load_active_clone_res_id, save_voice_clone_result
 
 
 app = FastAPI(title=settings.app_name)
@@ -39,6 +44,7 @@ chat_store = ChatStore(
 )
 UPLOAD_ROOT = Path(settings.upload_dir)
 IMAGE_UPLOAD_DIR = UPLOAD_ROOT / "images"
+VOICE_CLONE_UPLOAD_DIR = UPLOAD_ROOT / "voice-clone"
 UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 LOCAL_TIMEZONE = timezone(timedelta(hours=8))
 
@@ -166,10 +172,73 @@ async def transcribe_voice(audio: UploadFile = File(...)) -> VoiceTranscriptionR
 @app.post("/tts")
 async def text_to_speech(payload: TTSRequest) -> Response:
     try:
-        audio_bytes = await synthesize_audio(payload.text.strip(), voice=payload.voice)
+        if payload.scene == "daily" and (settings.xfyun_clone_res_id or load_active_clone_res_id()):
+            audio_bytes = await synthesize_clone_audio(payload.text.strip())
+        else:
+            audio_bytes = await synthesize_audio(payload.text.strip(), voice=payload.voice)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return Response(content=audio_bytes, media_type="audio/mpeg")
+
+
+@app.get("/api/voice-clone/train-text", response_model=VoiceCloneTrainTextResponse)
+async def voice_clone_train_text(textId: int = Query(default=5001)) -> VoiceCloneTrainTextResponse:
+    try:
+        data = await get_train_text(text_id=textId)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return VoiceCloneTrainTextResponse(
+        textId=int(data.get("textId") or textId),
+        textName=data.get("textName") or "",
+        textSegs=data.get("textSegs") or [],
+    )
+
+
+@app.post("/api/voice-clone/train", response_model=VoiceCloneTrainResponse)
+async def voice_clone_train(
+    audio: UploadFile = File(...),
+    textId: int = Form(default=5001),
+    textSegId: int = Form(default=1),
+    resourceName: str = Form(default="aime-daily-voice"),
+) -> VoiceCloneTrainResponse:
+    suffix = Path(audio.filename or "").suffix.lower()
+    if suffix not in {".wav", ".mp3", ".m4a", ".pcm"}:
+        suffix = ".wav"
+
+    VOICE_CLONE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    filename = f"{uuid4().hex}{suffix}"
+    file_path = VOICE_CLONE_UPLOAD_DIR / filename
+    file_path.write_bytes(await audio.read())
+    audio_url = f"{settings.public_base_url.rstrip('/')}/uploads/voice-clone/{filename}"
+
+    try:
+        task_id = await create_voice_clone_task(
+            audio_url=audio_url,
+            text_id=textId,
+            text_seg_id=textSegId,
+            resource_name=resourceName,
+            task_name=resourceName,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return VoiceCloneTrainResponse(taskId=task_id, audioUrl=audio_url)
+
+
+@app.get("/api/voice-clone/result", response_model=VoiceCloneResultResponse)
+async def voice_clone_result(taskId: str = Query(...)) -> VoiceCloneResultResponse:
+    try:
+        data = await get_voice_clone_result(taskId)
+        save_voice_clone_result(taskId, data)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return VoiceCloneResultResponse(
+        taskId=taskId,
+        trainStatus=data.get("trainStatus"),
+        assetId=data.get("assetId") or "",
+        trainVid=data.get("trainVid") or "",
+        failedDesc=data.get("failedDesc") or "",
+        raw=data,
+    )
 
 
 @app.get("/api/chat/review", response_model=ReviewSummaryResponse)
