@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     )
 
     llm_provider: str = Field(default="deepseek", validation_alias=AliasChoices("LLM_PROVIDER"))
+    langchain_enabled: bool = Field(default=False, validation_alias=AliasChoices("LANGCHAIN_ENABLED"))
     llm_api_key: str = Field(default="", validation_alias=AliasChoices("LLM_API_KEY", "OPENAI_API_KEY"))
     llm_model: str = Field(default="deepseek-v4-flash", validation_alias=AliasChoices("LLM_MODEL", "OPENAI_MODEL"))
     llm_base_url: str = Field(default="https://api.deepseek.com", validation_alias=AliasChoices("LLM_BASE_URL", "OPENAI_BASE_URL"))
@@ -46,7 +47,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("AI_CONTEXT_MESSAGES"),
     )
 
-    model_config = SettingsConfigDict(env_file=(".env", ".env.runtime"), env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=(".env", ".env.runtime"), env_file_encoding="utf-8", extra="ignore")
 
     @property
     def cors_origins(self) -> list[str]:
