@@ -110,6 +110,7 @@ def test_daily_chat_uses_training_memory(tmp_path: Path, monkeypatch) -> None:
         assert response.status_code == 200
         assert captured["user_message"] == "今天有点低落"
         assert any("少讲大道理" in item["content"] for item in captured["training_memory"])
+        assert not any("收到" in item["content"] for item in captured["training_memory"])
         assert response.json()["message"]["content"] == "我会按训练后的方式回复。"
     finally:
         chat_store._file_path = original_path
@@ -171,7 +172,10 @@ def test_training_memory_prompt_shapes_daily_ai_identity() -> None:
 
     assert "你就是训练者" in prompt
     assert "身份延伸" in prompt
+    assert "最高优先级人格提示词" in prompt
+    assert "直接、爱开玩笑、松弛" in prompt
     assert "经历和心情可以作为你的经历和心情" in prompt
+    assert "沉淀成日常聊天" not in prompt
     assert "尽最大可能变成训练者本人" in training_prompt
     assert "以训练者的身份去回应用户" in training_prompt
 

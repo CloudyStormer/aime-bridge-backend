@@ -82,7 +82,7 @@ def ai_chat(payload: ChatRequest) -> ChatResponse:
     reply = ai_service.chat(
         user_message=payload.message.strip(),
         history=chat_store.recent_for_ai(mode="chat", limit=settings.ai_context_messages),
-        training_memory=chat_store.recent_for_ai(mode="training", limit=settings.ai_context_messages),
+        training_memory=chat_store.recent_training_directives(limit=settings.ai_context_messages),
     )
     return ChatResponse(reply=reply)
 
@@ -322,7 +322,7 @@ async def _send_message_for_mode(request: Request, mode: ConversationMode):
         reply = ai_service.reply(
             user_message=content,
             history=chat_store.recent_for_ai(mode="chat", limit=settings.ai_context_messages),
-            training_memory=chat_store.recent_for_ai(mode="training", limit=settings.ai_context_messages),
+            training_memory=chat_store.recent_training_directives(limit=settings.ai_context_messages),
             image_url=payload.imageUrl,
         )
     return chat_store.append_assistant_message(reply, mode=mode)

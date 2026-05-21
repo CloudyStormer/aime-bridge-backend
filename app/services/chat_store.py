@@ -95,6 +95,18 @@ class ChatStore:
             if item.content.strip() or item.imageUrl
         ]
 
+    def recent_training_directives(self, limit: int = 120) -> list[dict]:
+        messages = [item for item in self.history(mode="training") if item.role == "wife"]
+        return [
+            {
+                "role": "user",
+                "content": item.content,
+                **({"imageUrl": item.imageUrl} if item.imageUrl else {}),
+            }
+            for item in messages[-limit:]
+            if item.content.strip() or item.imageUrl
+        ]
+
     def review_messages(
         self,
         start_at: datetime,
